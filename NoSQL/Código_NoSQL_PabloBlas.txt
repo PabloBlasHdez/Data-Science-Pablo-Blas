@@ -1,0 +1,640 @@
+1 ------------------------------------------------------------
+db.movies.find()
+
+
+1 ------------------------------------------------------------
+db.movies.findOne()
+
+
+2 ------------------------------------------------------------
+db.movies.countDocuments()
+
+
+3 -------------------------------------------------------------
+db.movies.insertOne(
+  {
+    "title": "EL Misterio del Código Omega",
+    "year": 2025,
+    "cast": ["Ana Fernández", "Javier Rey", "Elena Anaya"],
+    "genres": ["Thriller", "Ciencia Ficción", "Misterio"]
+  }
+);
+
+
+3 --------------------------------------------------------------
+db.movies.find(
+  {
+    "title": "EL Misterio del Código Omega"
+  }
+);
+
+
+4 ---------------------------------------------------------------
+db.movies.deleteOne(
+  {
+    "title": "EL Misterio del Código Omega"
+  }
+);
+
+
+4 ----------------------------------------------------------------
+db.movies.find(
+  {
+    "title": "EL Misterio del Código Omega"
+  }
+);
+
+
+5 ---------------------------------------------------------------
+db.movies.countDocuments({
+  cast: { $elemMatch: { $regex: /^and$/i } }
+});
+
+
+5 ---------------------------------------------------------------
+db.movies.find(
+  { cast: { $elemMatch: { $regex: /^and$/i } } },
+  { _id: 0, title: 1, cast: 1 }
+);
+
+
+6 ---------------------------------------------------------------
+db.movies.updateMany(
+  { cast: { $regex: /^and$/i } },                         // Busca el elemento exacto "and" en el array 'cast'
+  { $pull: { cast: { $regex: /^and$/i } } }          // Elimina ese elemento del array 'cast'
+);
+
+
+6 -----------------------------------------------------------------
+db.movies.find(
+  { cast: { $elemMatch: { $regex: /^and$/i } } }, 
+  { _id: 0, title: 1, cast: 1 }
+);
+
+
+7 ------------------------------------------------------------------
+db.movies.countDocuments({
+  cast: { $size: 0 }
+});
+
+7 ------------------------------------------------------------------
+db.movies.find(
+  { cast: { $size: 0 } },
+  { _id: 0, title: 1, year: 1, cast: 1 }
+);
+
+
+8 -------------------------------------------------------------------
+db.movies.updateMany(
+  {
+    cast: { $exists: true, $type: "array", $size: 0 }
+  },
+  {
+    $set: { cast: ["Undefined"] }
+  }
+);
+
+
+8 ------------------------------------------------------------------
+db.movies.countDocuments({ cast: ["Undefined"] });
+
+
+8 ------------------------------------------------------------------
+db.movies.find(
+  { cast: ["Undefined"] },
+  { _id: 0, title: 1, cast:1 }
+);
+
+
+9 -----------------------------------------------------------------
+db.movies.countDocuments({ genres: { $size: 0 } });
+
+
+9 ----------------------------------------------------------------
+db.movies.find(
+  { genres: { $size: 0 } },
+  { _id: 0, title: 1, year: 1, genres: 1 }
+);
+
+
+10 ---------------------------------------------------------------
+db.movies.updateMany(
+  { genres: { $size: 0 } },                            // Filtra solo los documentos con el array vacío
+  { $set: { genres: ["Undefined"] } }          // Reemplaza el array vacío con ["Undefined"]
+);
+
+
+10 ---------------------------------------------------------------
+db.movies.find(
+  { genres: ["Undefined"] },           // Películas cuyo array 'genres' contiene exactamente "Undefined"
+  { _id: 0, title: 1, year: 1, genres: 1 }
+);
+
+
+11 ----------------------------------------------------------------
+db.movies.find(
+  {},
+  { _id: 0, title: 1, year: 1 }
+) .sort({ year: -1 }).limit(1);
+
+
+12 -------------------------------------------------------------
+db.movies.aggregate([
+  // Obtenemos el año más reciente (maxYear)
+  {
+    $group: {
+      _id: null,
+      maxYear: { $max: "$year" }
+    }
+  },
+  // Calculamos el límite inferior (últimos 20 años >> restamos 19)
+  {
+    $project: {
+      _id: 0,
+      maxYear: 1,
+      minYear: { $subtract: ["$maxYear", 19] }
+    }
+  },
+  // Contamos las películas dentro del rango [minYear, maxYear]
+  {
+    $lookup: {
+      from: "movies",
+      let: { maxY: "$maxYear", minY: "$minYear" },
+      pipeline: [
+        {
+          $match: {
+            $expr: {
+              $and: [
+                { $gte: ["$year", "$$minY"] },
+                { $lte: ["$year", "$$maxY"] }
+              ]
+            }
+          }
+        },
+        { $count: "totalPeliculasUltimos20" }
+      ],
+      as: "conteo"
+    }
+  },
+  // Resultado final
+  {
+    $project: {
+      maxYear: 1,
+      minYear: 1,
+      totalPeliculasUltimos20: {
+        $arrayElemAt: ["$conteo.totalPeliculasUltimos20", 0]
+      }
+    }
+  }
+]);
+
+
+12 -----------------------------------------------------------
+db.movies.aggregate([
+  // Obtenemos el año más reciente (maxYear)
+  {
+    $group: {
+      _id: null,
+      maxYear: { $max: "$year" }
+    }
+  },
+  // Calculamos el límite inferior (últimos 20 años >> restamos 19)
+  {
+    $project: {
+      _id: 0,
+      maxYear: 1,
+      minYear: { $subtract: ["$maxYear", 19] }
+    }
+  },
+  // Unimos (join) la colección de películas consigo misma (self-join) para poder aplicar un filtro ($match) que use las variables calculadas.
+  {
+    $lookup: {
+      from: "movies",                                             // La misma colección
+      pipeline: [
+        { $match: { _id: { $exists: true } } }          // Devuelve todos los documentos de 'movies'
+      ],
+      as: "peliculas"
+    }
+  },
+  // Desenrollamos el array de películas, creando un documento por cada película
+  {
+    $unwind: "$peliculas"
+  },
+  // Filtramos las películas que cumplen con el rango de [minYear, maxYear]
+  {
+    $match: {
+      $expr: {
+        $and: [
+          { $gte: ["$peliculas.year", "$minYear"] }, // year >= minYear
+          { $lte: ["$peliculas.year", "$maxYear"] }  // year <= maxYear
+        ]
+      }
+    }
+  },
+  // Proyectamos el documento final de la película, eliminando las variables de rango
+  {
+    $replaceRoot: {
+      newRoot: "$peliculas"
+    }
+  }
+]);
+
+
+13 ------------------------------------------------------------
+db.movies.aggregate([
+  // Filtramos solo las películas entre 1960 y 1969
+  {
+    $match: {
+      year: { $gte: 1960, $lte: 1969 }
+    }
+  },
+  // Agrupamos todo en un único grupo y sumamos 1 por cada película
+  {
+    $group: {
+      _id: null,
+      totalPeliculasDecada60: { $sum: 1 }
+    }
+  },
+  // Proyectamos el resultado final sin el _id
+  {
+    $project: {
+      _id: 0,
+      totalPeliculasDecada60: 1
+    }
+  }
+]);
+
+
+13 -----------------------------------------------------------
+db.movies.aggregate([
+  {
+    $match: {
+      year: { $gte: 1960, $lte: 1969 }
+    }
+  },
+  {
+    $project: {
+      _id: 0,
+      title: 1,
+      year: 1
+    }
+  },
+  {
+    $sort: { year: 1, title: 1 }           // opcional: ordena por año y título
+  }
+]);
+
+
+14 --------------------------------------------------------------
+db.movies.aggregate([
+  // Agrupamos por año y contamos cuántas películas hay en cada uno
+  {
+    $group: {
+      _id: "$year",
+      totalPeliculas: { $sum: 1 }
+    }
+  },
+  // Encontramos el máximo número de películas en un año
+  {
+    $group: {
+      _id: null,
+      maxPeliculas: { $max: "$totalPeliculas" },
+      data: { $push: { year: "$_id", totalPeliculas: "$totalPeliculas" } }
+    }
+  },
+  // Filtramos solo los años que tienen el máximo número de películas
+  {
+    $unwind: "$data"
+  },
+  {
+    $match: {
+      $expr: { $eq: ["$data.totalPeliculas", "$maxPeliculas"] }
+    }
+  },
+  // Proyectamos el resultado final limpio
+  {
+    $project: {
+      _id: 0,
+      year: "$data.year",
+      totalPeliculas: "$data.totalPeliculas"
+    }
+  }
+]);
+
+
+15 -------------------------------------------------------------------
+db.movies.aggregate([
+  // Agrupamos por año y contamos cuántas películas hay en cada uno
+  {
+    $group: {
+      _id: "$year",
+      totalPeliculas: { $sum: 1 }
+    }
+  },
+  // Calculamos el número mínimo de películas por año
+  {
+    $group: {
+      _id: null,
+      minPeliculas: { $min: "$totalPeliculas" },
+      data: { $push: { year: "$_id", totalPeliculas: "$totalPeliculas" } }
+    }
+  },
+  // Descomponemos el array 'data' para poder filtrar
+  {
+    $unwind: "$data"
+  },
+  // Filtramos solo los años que tienen el número mínimo de películas
+  {
+    $match: {
+      $expr: { $eq: ["$data.totalPeliculas", "$minPeliculas"] }
+    }
+  },
+  // Mostramos el resultado final limpio
+  {
+    $project: {
+      _id: 0,
+      year: "$data.year",
+      totalPeliculas: "$data.totalPeliculas"
+    }
+  }
+]);
+
+
+16 --------------------------------------------------------
+db.movies.aggregate([
+  { $unwind: "$cast"  },           // Descompone el array 'cast' -> un documento por actor
+  {
+    $project: {                           // Conserva solo las claves solicitadas
+      _id: 0,
+      title: 1,
+      year: 1,
+      cast: 1,
+      genres: 1
+    }
+  },
+  { $out: "actors" }                 // Guarda el resultado en 'actors' 
+]);
+
+
+16 -----------------------------------------------------------
+db.actors.countDocuments()
+
+
+17 -----------------------------------------------------------
+db.actors.aggregate([
+  {
+    $match: { cast: { $ne: "Undefined" } }            // Filtramos actores "Undefined"
+  },
+  {
+    $group: {                                                         // Agrupamos por nombre de actor
+      _id: "$cast",
+      moviesCount: { $sum: 1 }                            // Contamos cuántas películas tiene cada actor
+    }
+  },
+  {
+    $sort: { moviesCount: -1 }                             // Ordenamos de mayor a menor
+  },
+  {
+    $limit: 5                                                         // Solo los 5 primeros
+  }
+]);
+
+
+18 -----------------------------------------------------------------
+db.actors.aggregate([
+  {
+    $group: {
+      _id: { title: "$title", year: "$year" },            // Agrupamos por película y año
+      totalActors: { $sum: 1 }                              // Contamos un actor por documento
+    }
+  },
+  {
+    $sort: { totalActors: -1 }                              // Ordenamos de mayor a menor
+  },
+  {
+    $limit: 5                                                     // Tomamos solo las 5 primeras
+  }
+]);
+
+
+19 -----------------------------------------------------------------
+db.actors.aggregate([
+  {
+    $match: { cast: { $ne: "Undefined" } }          // Filtramos actores "Undefined"
+  },
+  {
+    $group: {                                                        // Agrupamos por actor
+      _id: "$cast",
+      firstYear: { $min: "$year" },                       // Año de su primera película
+      lastYear: { $max: "$year" }                        // Año de su última película
+    }
+  },
+  {
+    $addFields: {                                            // Calculamos duración
+      careerLength: { $subtract: ["$lastYear", "$firstYear"] }
+    }
+  },
+  {
+    $sort: { careerLength: -1 }                      // Ordenamos de mayor a menor
+  },
+  {
+    $limit: 5                                                  // Solo los 5 primeros
+  }
+]);
+
+
+20 --------------------------------------------------------------
+db.actors.aggregate([
+  {
+    $unwind: "$genres"          // Descomponemos el array 'genres' -> un documento por género
+  },
+  {
+    $project: {                       // Conservamos todas las claves solicitadas
+      _id: 0,
+      title: 1,
+      year: 1,
+      cast: 1,
+      genres: 1
+    }
+  },
+  {
+    $out: "genres"                 // Guardamos el resultado en la nueva colección 'genres'
+  }
+]);
+
+
+20 ----------------------------------------------------------------
+db.genres.countDocuments()
+
+
+21 ----------------------------------------------------------------
+db.genres.aggregate([
+  {
+    $match: { genres: { $ne: "Undefined" } }            // Filtramos géneros "Undefined"
+  },
+  {
+    $group: {                                                              // Agrupamos por año y género
+      _id: { year: "$year", genres: "$genres" },
+      totalMovies: { $addToSet: "$title" }                  // Guardamos los títulos únicos
+    }
+  },
+  {
+    $project: {
+      _id: 1,
+      totalMovies: { $size: "$totalMovies" }             // Contamos el número de películas diferentes
+    }
+  },
+  {
+    $sort: { totalMovies: -1 }                                    // Ordenamos de mayor a menor
+  },
+  {
+    $limit: 5                                                              // Solo los 5 primeros
+  }
+]);
+
+
+22 -------------------------------------------------------------
+db.genres.aggregate([
+  {
+    $match: { cast: { $ne: "Undefined" } }            // Filtramos actores "Undefined"
+  },
+  {
+    $group: { // Agrupamos por actor
+      _id: "$cast",
+      uniqueGenres: { $addToSet: "$genres" }      // Obtenemos géneros distintos
+    }
+  },
+  {
+    $addFields: {                                                   // Contamos cuántos géneros distintos tiene
+      numGenres: { $size: "$uniqueGenres" }
+    }
+  },
+  {
+    $sort: { numGenres: -1 }                                // Ordenamos de mayor a menor
+  },
+  {
+    $limit: 5                                                         // Tomamos los 5 primeros
+  }
+]);
+
+
+23 -------------------------------------------------------------------
+db.genres.aggregate([
+  {
+    $match: { genres: { $ne: "Undefined" } }              // Filtramos géneros "Undefined"
+  },
+  {
+    $group: { 
+      _id: { title: "$title", year: "$year" },                    // Agrupamos por película (título y año)
+      uniqueGenres: { $addToSet: "$genres" }            // Guardamos los géneros distintos
+    }
+  },
+  {
+    $addFields: { 
+      numGenres: { $size: "$uniqueGenres" }              // Contamos el número de géneros distintos 
+
+    }
+  },
+  {
+    $sort: { numGenres: -1 }                                      // Ordenamos de mayor a menor
+  },
+  {
+    $limit: 5                                                                // Tomamos solo las 5 primeras
+  }
+]);
+
+
+Query libre 1 ---------------------------------------------------
+db.movies.aggregate([
+  // Descomponemos el array 'genres'
+  { $unwind: "$genres" },
+  // Filtramos valores no informativos
+  { $match: {
+      “genres”: { 
+         $nin: ["Undefined", "", null] 
+      }
+   } },
+  // Agrupamos por el nombre del género y contamos
+  { $group: {
+      _id: "$genres",
+      num_peliculas: { $sum: 1 }            // Contamos las apariciones del género
+    } },
+  // Ordenamos por conteo de forma descendente
+  { $sort: { num_peliculas: -1 } }
+]);
+
+
+Query libre 2 ---------------------------------------------------
+db.movies.aggregate([
+  // Expandimos el array 'cast' para generar un documento por cada aparición de un actor
+  { $unwind: "$cast" },
+  // Filtramos los documentos para excluir actores con el valor "Undefined"
+  { $match: { cast: { $ne: "Undefined" } } },
+  // Agrupamos por la combinación (Década + Actor) y cuenta la frecuencia
+  // La década se calcula con operadores matemáticos: año - (año % 10)
+  { $group: {
+      _id: {
+        decada: { $subtract: ["$year", { $mod: ["$year", 10] }] }, 
+        actor: "$cast"
+      },
+      count_movies: { $sum: 1 }
+    } },
+  // Ordenamos los resultados por década y, luego, por conteo descendente (el actor más popular de cada década se posiciona primero)
+  { $sort: { "_id.decada": 1, "count_movies": -1 } },
+  // Volvemos a agrupar solo por la década. Usamos $first para capturar el actor y el conteo del primer documento de cada grupo
+  { $group: {
+      _id: "$_id.decada",
+      actor_top: { $first: "$_id.actor" },
+      max_movies: { $first: "$count_movies" }
+    } },
+  // Formateamos la salida para transformar la década numérica en un rango de texto (YYYY-YYYY)
+  { $project: {
+      _id: 0,
+      Decada: {
+        $concat: [
+          { $toString: "$_id" },
+          "-",
+          { $toString: { $add: ["$_id", 9] } }
+        ]
+      },
+      Actor_top: "$actor_top",
+      Num_Peliculas: "$max_movies",
+    } },
+  // Ordenamos el resultado final por la década cronológicamente
+  { $sort: { "Decada": 1 } }
+]);
+
+
+Query libre 3 ---------------------------------------------------
+db.movies.aggregate([
+  // Eliminamos películas con arrays de géneros vacíos o “Undefined”
+  { $match: { "genres": { $nin: ["Undefined", "", null], $exists: true, $ne: [] } } },
+  // Creamos una copia de ‘genres’ para posteriormente realizar un doble unwind.
+  { $addFields: { genres_copy: "$genres" } },
+  // Descomponemos y generamos todas las combinaciones posibles de géneros dentro de cada película.
+  { $unwind: "$genres" },
+  { $unwind: "$genres_copy" },
+  // Normalizamos usando $match con $expr para asegurar que:
+  // >> El Género A sea menor que el Género B ($lt) para tratar (A, B) y (B, A) como un único par.
+  // >> Se excluyan los pares donde el género es el mismo (A, A).
+  { $match: { $expr: { $lt: ["$genres", "$genres_copy"] } } },
+  // Concatenamos el par de géneros en un único campo (ej: "Action | Drama").
+  { $project: {
+    _id: 0,
+    genre_pair: { $concat: ["$genres", " | ", "$genres_copy"] }
+  } },
+  // Agrupamos por pares y contamos la frecuencia de co-ocurrencia.
+  { $group: {
+    _id: "$genre_pair",
+    co_occurrence: { $sum: 1 }
+  } },
+  // Ordenamos para encontrar los pares más frecuentes.
+  { $sort: { co_occurrence: -1 } },
+  // Mostramos solo los 5 pares principales.
+  { $limit: 5 }
+]);
+
+
+
+
+

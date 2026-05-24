@@ -1,0 +1,461 @@
+#Entrega Pablo Blas - 100474502
+
+#Instalamos los paquetes de librerías necesarios para realizar el estudio
+install.packages("ggplot2")
+install.packages("MASS")
+install.packages("gridExtra")
+install.packages("plyr")
+install.packages("e1071")
+install.packages("reshape2")
+install.packages("magrittr")
+install.packages("tidyr")
+install.packages("GGally")
+install.packages("jtools")
+install.packages("leaps")
+install.packages("viridis")
+
+
+#Cargamos las librerías
+library(ggplot2)
+library(MASS)
+library(gridExtra)
+library(plyr)
+library(e1071)
+library(reshape2)
+library(magrittr)
+library(tidyr)
+library(GGally)
+library('jtools')
+library(leaps)
+library(viridis)
+
+
+# Cargar el dataset Boston
+data(Boston)
+
+# Exploración de los datos
+str(Boston)
+names(Boston)
+
+# Contar el total de valores nulos en el conjunto de datos
+total_missing <- sum(is.na(Boston))
+cat("Número total de valores nulos en el conjunto de datos: ", total_missing, "\n")
+
+
+# ANÁLISIS DESCRIPTIVO DE LOS DATOS: ESTADÍSTICOS PRINCIPALES
+# Medidas de posición.
+summary_df <- data.frame(
+  Variable = colnames(Boston),
+  Media = sapply(Boston, mean),
+  Mínimo = sapply(Boston, min),
+  Primer_cuartil = sapply(Boston, quantile, probs = 0.25),
+  Mediana = sapply(Boston, median),
+  Tercer_cuartil = sapply(Boston, quantile, probs = 0.75),
+  Máximo = sapply(Boston, max)
+)
+summary_df
+
+# Medidas de dispersión.
+statistics_df <- data.frame(
+  Variable = colnames(Boston),
+  Varianza = sapply(Boston, var),
+  "Desviación estandar" = sapply(Boston, sd),
+  "Coeficiente de asimetria" = sapply(Boston, skewness),
+  Curtosis = sapply(Boston, kurtosis)
+)
+statistics_df
+
+
+
+# ANÁLISIS DETALLADO DE LAS VARIABLES
+# Histogramas de la variable target medv
+#Histograma de Frecuencia
+hist(Boston$medv, 
+     main = "Distribución de frecuencia del valor medio de las viviendas",
+     xlab = "Valor Medio de las Viviendas (medv)",
+     ylab = "Frecuencia",
+     col = "skyblue",
+     border = "black",
+     breaks = 20)
+     
+#Histograma de Densidad
+ggplot(Boston, aes(x = medv)) + 
+  geom_histogram(aes(y = after_stat(density)), 
+                 bins = 20, 
+                 fill = "skyblue", 
+                 color = "black", 
+                 alpha = 0.5) +
+  geom_density(color = "blue", 
+               linewidth = 1) +
+  labs(title = "Distribución de densidad del Valor Medio de las Viviendas",
+       x = "Valor Medio de las Viviendas (medv)",
+       y = "Densidad") +
+  theme_minimal()
+     
+#Insight: El histograma muestra que la distribución del valor medio de las viviendas (medv) tiende a seguir una distribución sesgada hacia la derecha, lo que nos puede indicar que nuestra variable target “medv” no sigue una distribución normal. La asimetría a la derecha (sesgo positivo) sugiere que la mayoría de las viviendas están en el rango de valores bajos a moderados. Sin embargo, hay una notable presencia de valores altos que contribuyen a esta distribución sesgada positivamente. Esto indica que existen algunas viviendas con valores medios significativamente más altos (como casas de lujos o zonas ricas), que se consideran valores atípicos. Además, la presencia de un gran número de valores en el extremo derecho (50) sugiere que puede haber un límite en los datos, es decir un techo en los precios de las viviendas en el dataset, y puede distorsionar el análisis al no representar adecuadamente la distribución de valores superiores a 50.
+
+
+# Boxplot de las variables del dataset Boston
+df_boxplot <- as.data.frame(Boston[, !names(Boston) %in% c("black", "tax", "age")])
+
+df_boxplot_melted <- reshape2::melt(df_boxplot)
+
+ggplot(df_boxplot_melted, aes(x = variable, y = value)) +
+  geom_boxplot() +
+  labs(x = "Variable", y = "Valor", title = "Diagrama de caja de las variables incluidas en Boston Housing Dataset")
+
+#Insight: Como podemos observar en el diagrama de caja de las variables con rango de valores entre 0 y 100, crim y zn obtienen un número de valores atípicos muy elevado y se alejan de tener una distribución asimétrica. En parte también, es el caso de la variable de precios de la vivienda que tiene observaciones atípicas por la cola derecha, es decir, valores superiores al percentil 90 de la distribución
+
+# Boxplot de las variables restantes del dataset Boston
+df_boxplot <- as.data.frame(Boston[, names(Boston) %in% c("black", "tax", "age")])
+
+df_boxplot_melted <- reshape2::melt(df_boxplot)
+
+ggplot(df_boxplot_melted, aes(x = variable, y = value)) +
+  geom_boxplot() +
+  labs(x = "Variable", y = "Valor", title = "Diagrama de caja de las variables incluidas en Boston Housing Dataset")
+
+#Insight: La variable Black es una transformación del porcentage de personas de raza negra en un municipio concreto, por lo tanto, la mayoria de los valores estan bastante concentrados en un rango pequeño pero también tiene más valores atípico que el resto de variables. Sin embargo, la variable "age" y "tax" son regresores con una distribución concentrada.
+
+
+# Calcular la matriz de correlación
+correlation_matrix <- cor(Boston)
+
+# Convertir la matriz de correlación a formato largo
+correlation_data <- melt(correlation_matrix)
+
+# Heatmap que muestra la intensidad de las correlaciones de las variables
+ggplot(data = correlation_data, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", 
+                       midpoint = 0, limit = c(-1, 1),
+                       name = "Correlation") +
+  labs(title = "Correlación de las variables que afectan a la vivienda en Boston",
+       x = "Variables", y = "Variables") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme_minimal()
+
+
+#Insight: Debido a que existen regresores correlacionados entre ellos habrá que comprobar que los modelos esten libres del problema de multicolianealidad.
+
+
+#Calculamos la correlación de los potenciales regresores del dataset respecto a la varibale target "medv"
+correlation_df <-as.data.frame(correlation_matrix[,"medv"])
+
+correlation_df <- correlation_df[-nrow(correlation_df), , drop = FALSE]
+correlation_df$Variable <- rownames(correlation_df)
+colnames(correlation_df) = c("Coeficiente_correlacion", "Variable")
+correlation_df <- correlation_df[order(correlation_df$Coeficiente_correlacion), ]
+print (correlation_df)
+
+#Representamos dicha correlación mediante un gráfico de barras
+ggplot(correlation_df, aes(x = reorder(Variable, -Coeficiente_correlacion), y = Coeficiente_correlacion, fill=Coeficiente_correlacion)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(title = "Correlación del precio de la vivienda con el resto de potenciales regresores",
+       x = "Variable",
+       y = "Coeficiente") +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", 
+                       midpoint = 0,
+                       name = "Coeficiente_correlacion") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme_minimal()
+
+# Insight: En este gráfico ordenamos los coeficientes de correlación de los posibles regresores de mayor a menor. A simple vista, las variables "rm" y "lstat" obtienen valores absolutos significativamente superiores al resto de variables. Podemos obtener las siguientes conclusiones a la hora de invertir en una vivienda en Boston: 
+# 1) Las casas con más habitaciones ("rm” más alto) son más caras: Las casas con más dormitorios generalmente son más grandes y albergan a más personas, por lo que cuestan más. Es una variable directamente proporcional a la variable target “medv” que indica el precio medio de las viviendas. 
+# 2) Las áreas con más personas pertenecientes a los estatus más bajos (valores “lstat” más altos) tienen costos más bajos. Una proporción mayor de personas de la clase trabajadora baja es un indicador de menor poder adquisitivo y, por lo tanto, valores de vivienda más bajos. Es una variable inversamente proporcional a la variable target “medv” que indica el precio medio de las viviendas.
+
+
+# Relación de la variable medv con los potenciales regresores.
+pairs(~ medv + ptratio + black + lstat + dis + rm + crim, data = Boston, main = "Boston Data")
+
+#Insight: lstat, dis y rm pueden tener potencialmente un fit lineal adecuado para la variable target (medv). El resto parecen no obtener una relación aparente con la variable independiente.
+
+
+
+#TABLA DE CONTINGENCIA
+#Comprobamos la posible relación entre la variable de precio de vivienda "medv" y "lstat" mediante una tabla de contingencia simplificada.
+tabla_contingencia = Boston[, c("medv", "lstat")]
+tabla_contingencia$medv_breaks <-ifelse(Boston$medv<17, "Muy bajo medv", "NA")
+tabla_contingencia$medv_breaks <-ifelse((Boston$medv>=17) & (Boston$medv<=21.2), "Bajo medv", tabla_contingencia$medv_breaks)
+tabla_contingencia$medv_breaks <-ifelse((Boston$medv>21.2) & (Boston$medv<=25), "Alto medv", tabla_contingencia$medv_breaks)
+tabla_contingencia$medv_breaks <-ifelse(Boston$medv>=25, "Muy alto medv", tabla_contingencia$medv_breaks)
+
+tabla_contingencia$lstat_breaks <-ifelse(Boston$lstat<6.95, "Muy bajo lstat", "NA")
+tabla_contingencia$lstat_breaks <-ifelse((Boston$lstat>=6.95) & (Boston$lstat<=11.4), "Bajo lstat", tabla_contingencia$lstat_breaks)
+tabla_contingencia$lstat_breaks <-ifelse((Boston$lstat>11.4) & (Boston$lstat<=17), "Alto lstat", tabla_contingencia$lstat_breaks)
+tabla_contingencia$lstat_breaks <-ifelse(Boston$lstat>=17, "Muy alto lstat", tabla_contingencia$lstat_breaks)
+
+tabla_contingencia_final <- table(tabla_contingencia$lstat_breaks, tabla_contingencia$medv_breaks)
+
+contingency_df <- as.data.frame.table(tabla_contingencia_final)
+names(contingency_df) <- c("lstat_breaks", "medv_breaks", "Frequency")
+column_order <- c("Muy bajo medv", "Bajo medv", "Alto medv", "Muy alto medv")
+contingency_df$medv_breaks <- factor(contingency_df$medv_breaks, levels = column_order)
+row_order <- c("Muy bajo lstat", "Bajo lstat", "Alto lstat", "Muy alto lstat")
+contingency_df$lstat_breaks <- factor(contingency_df$lstat_breaks, levels = row_order)
+
+# Representamos la tabla de contingencia de manera visual mediante gráfico de correlación
+ggplot(data = contingency_df, aes(x = lstat_breaks, y = medv_breaks, fill = Frequency, label = Frequency)) +
+  geom_tile(color = "white") +
+  geom_text(color = "black", size = 3) +  # Add text labels
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", 
+                       midpoint = median(contingency_df$Frequency), 
+                       name = "Frecuencia") +
+  labs(title = "Mapa de calor de la tabla de contingencia",
+       x = "LSTAT", y = "MEDV") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Test chi-cuadrado para evaluar la asociación entre las varibales "medv" y "lstat"
+chi_square_test <- chisq.test(tabla_contingencia_final)
+print(chi_square_test)
+
+#El p valor del test chi-squared es inferior a 0.05. Por lo tanto, sugiere que hay evidencia suficiente para rechazar la hipótesis nula, es decir, se rechaza la hipótesis nula de independencia entre las variables y se concluye que hay una asociación significativa entre las variables.
+
+
+
+# REGRESIÓN LINEAL SIMPLE
+# Dispersión medv-lstat (porcentaje de población con bajo status)
+ggplot(Boston, aes(x = lstat, y = medv)) +
+  geom_point(color = 'darkred', shape = 16) +
+  geom_smooth(method = 'lm', formula = y ~ x, color = 'blue', size = 1.5, se = FALSE) +
+  labs(x = 'Porcentaje de población con bajo nivel socioeconómico (lstat)',
+       y = 'Valor Medio de las Viviendas (medv)',
+       title = 'Nivel socioeconómico de los residentes vs. Valor Medio de las Viviendas')
+
+#Insight: En el diagrama de dispersión de las variables medv y lstat (porcentaje de población con bajo status) parece existir una relación negativa pero con una vertiente no lineal 
+
+#Pasamos a realizar la primera prueba con un modelo simple de regresión lineal:
+lm.fit =lm(medv~lstat ,data=Boston )
+summary(lm.fit)
+
+#Insight: Existe una relación lineal negativa demostrada por el coeficiente negativo de -0.95. Este coeficiente es significativo a un nivel de confianza del 99% ya que el p-value asociado es inferior a 0,01. El R2 ajustado es bastante eleveado pero el modelo puede aumentar su explicabilidad añadiendo regresores adicionales. En este caso, la variabilidad del precio mediano de la vivienda viene explicado en un 54% por la variabilidad del porcentaje de población con bajo estatus. Después de realizar el fit, analizamos el comportamiento de los residuos para discernir si existe algun patrón.
+
+
+# DIAGNÓSTICO DEL MODELO
+#HETEROCEDASTICIDAD VS HOMOCEDASTICIDAD
+residuos <- resid(lm.fit)
+
+# Gráfico de residuos vs. valores ajustados
+plot(lm.fit, which = 1)
+
+# Gráfico de residuos estandarizados vs. valores ajustados
+plot(lm.fit, which = 3)
+
+# Insight de los gráficos de residuos: El primer gráfico (grafico residuos vs. valores ajustados) ayuda a identificar si existe una relación entre los residuos y los valores ajustados, en este caso existe un patrón basado en una relación no lineal que no estamos captando y que también se ve reflejado en el segundo gráfico con los residuos estandarizados. En el segundo gráfico se puede identificar que existe cierta varianza en los residuos de los valores ajustados.
+
+#Breusch-Pagan para confirmar si nos encontramos ante un modelo heterocedástico u homocedástico
+install.packages("lmtest")
+library(lmtest)
+bptest(lm.fit)
+
+# Obtenemos un valor inferior a p=0.05 por lo que se determina que hay suficiente evidencia para rechazar la hipótesis nula de homocedasticidad y declarar que es un modelo heterocedástico. Esto significa que la variabilidad de los errores (residuos) en el modelo no es constante en todos los niveles de lstat. En otras palabras, la varianza de los errores cambia a medida que cambia la variable lstat.
+
+#NORMALIDAD DE LOS RESIDUOS
+#Gráfico Q-Q plot de los residuos estandarizados
+qqnorm(residuos)
+qqline(residuos)
+# Insight: Las características de la distribución de estos residuos también se pueden observar en el gráfico QQ-plot, existe cierta desviación respecto al ideal de distribución normal (puntos en la línea diagonal).
+
+#Test de normalidad de Shapiro-Wilk
+shapiro.test(resid(lm.fit))
+# p-valor muy inferior a 0.05, por lo que rechazamos H0, los residuos NO se comportan como una normal.
+
+#Kurtosis y Skeweness
+skewness(residuos)
+kurtosis(residuos)
+# la kurtosis queda fuera del rango comprendido entre -2 y 2, por lo que podemos de nuevo rechazar la hipótesis de normalidad.
+
+#INDEPENDENCIA DE LOS RESIDUOS
+library(lmtest)
+# Prueba de Durbin-Watson. H0: no existe autocorrelacion entre los residuos.
+dwtest(lm.fit)
+# p-valor mucho menor que 0,05, por lo que rechazamos la hipótesis inicial: los residuos NO son independientes. Esto es lógico pues en principio es un modelo "incompleto" ya que falta información por lo que hay que añadir variables, y es por ello, que realizaremos un modelo múltiple. Esto quiere decir que “lstat” por sí solo no puede explicar el precio medio de las viviendas en Boston y necesita de otras variables que le complementen para poder explicar con certeza dicho precio.
+
+
+
+#REGRESIÓN LINEAL MÚLTIPLE
+# Incorporamos la variable lstat^2 para captar esta información:
+Boston$lstat2 <- (Boston$lstat)^2
+
+regfit.comparacion = regsubsets(medv~.,Boston, nvmax=10)
+summary(regfit.comparacion)
+
+#Comentario informativo: Regsubsets es un algoritmo que te señala el mejor modelo segun el numero de regresores máximos que quieres incluir. En este caso el mejor modelo de una variable contendria lstat, el mejor modelo de 2 variables utilizaría lstat y rm, el de 3 variables sería lstat, rm y ptratio, etc. Nota del libro Introduction to Statistical Learning sobre este algoritmo: The `regsubsets()` function (part of the `leaps` library) performs best subset selection by identifying the best model that contains a given number of predictors, where *best* is quantified using RSS. The syntax is the same as for `lm()`. The `summary()` command outputs the best set of variables for each model size.
+
+#Teniendo en cuenta la información del algoritmo realizamos el resumen de regresiones para estas combinaciones
+correlation_df_aux = correlation_df
+correlation_df_aux$Coeficiente_correlacion = abs(correlation_df_aux$Coeficiente_correlacion)
+correlation_df_aux <- correlation_df_aux[order(correlation_df_aux$Coeficiente_correlacion), ]
+correlation_df_aux$Variable
+
+# Ordenamos las variables por su coeficiente de correlación en valor absoluto con la variable dependiente (correlation_df$Variable).
+
+# Realizamos la regresiones lineales múltiples seguidas de un test anova que confirma que no se pierde significancia en el modelo al ir eliminando variables. Esto se debe a que su p-valor indica que son prescindibles pues es >0.05:
+
+regresionlmultiple1 = lm(medv~chas+dis+black+zn+age+rad+crim+nox+tax+indus+ptratio+rm+lstat+lstat2, data=Boston)
+summary(regresionlmultiple1)
+
+regresionlmultiple2 = update(regresionlmultiple1, .~.-chas)
+summary(regresionlmultiple2)
+anova(regresionlmultiple1,regresionlmultiple2)
+
+regresionlmultiple3 = update(regresionlmultiple2, .~.-dis)
+summary(regresionlmultiple3)
+anova(regresionlmultiple2,regresionlmultiple3)
+
+regresionlmultiple4 = update(regresionlmultiple3, .~.-black)
+summary(regresionlmultiple4)
+anova(regresionlmultiple3,regresionlmultiple4)
+
+regresionlmultiple5 = update(regresionlmultiple4, .~.-zn)
+summary(regresionlmultiple5)
+anova(regresionlmultiple4,regresionlmultiple5)
+
+regresionlmultiple6 = update(regresionlmultiple5, .~.-age)
+summary(regresionlmultiple6)
+anova(regresionlmultiple5,regresionlmultiple6)
+
+regresionlmultiple7 = update(regresionlmultiple6, .~.-rad)
+summary(regresionlmultiple7)
+anova(regresionlmultiple6,regresionlmultiple7)
+
+regresionlmultiple8 = update(regresionlmultiple7, .~.-crim)
+summary(regresionlmultiple8)
+anova(regresionlmultiple7,regresionlmultiple8)
+
+regresionlmultiple9 = update(regresionlmultiple8, .~.-nox)
+summary(regresionlmultiple9)
+anova(regresionlmultiple8,regresionlmultiple9)
+
+regresionlmultiple10 = update(regresionlmultiple9, .~.-tax)
+summary(regresionlmultiple10)
+anova(regresionlmultiple9,regresionlmultiple10)
+
+regresionlmultiple11 = update(regresionlmultiple10, .~.-indus)
+summary(regresionlmultiple11)
+anova(regresionlmultiple10,regresionlmultiple11)
+
+regresionlmultiple12 = update(regresionlmultiple11, .~.-ptratio)
+summary(regresionlmultiple12)
+anova(regresionlmultiple11,regresionlmultiple12)
+
+regresionlmultiple13 = update(regresionlmultiple12, .~.-rm)
+summary(regresionlmultiple13)
+anova(regresionlmultiple12,regresionlmultiple13)
+
+regresionlmultiple14 = update(regresionlmultiple13, .~.-lstat)
+summary(regresionlmultiple14)
+anova(regresionlmultiple13,regresionlmultiple14)
+
+
+# Podemos exportarlo a html y hacer una captura para que sea más facil de comparar
+
+export_summs(regresionlmultiple1, regresionlmultiple2, regresionlmultiple3, regresionlmultiple4, regresionlmultiple5, regresionlmultiple6, regresionlmultiple7, regresionlmultiple8, regresionlmultiple9, regresionlmultiple10, regresionlmultiple11, regresionlmultiple12, regresionlmultiple13, regresionlmultiple14, model.names = c("Modelo 1", "Modelo 2", "Modelo 3", "Modelo 4", "Modelo 5", "Modelo 6", "Modelo 7", "Modelo 8", "Modelo 9", "Modelo 10", "Modelo11", "Modelo12", "Modelo13", "Modelo14"), stars = c(`***` = 0.01, `**` = 0.05, `*` = 0.1), statistics = c('Adj.R2' = 'adj.r.squared'),  to.file = "HTML", file.name = "Comparación de modelos.html")
+
+#Insight: Podemos observar como la métrica del R2 ajustado, que corrige el R2 estandard para evitar añadir variables que no aporten suficiente información para la variable dependiente, aumenta con cada regresor que añadimos pero de forma decreciente a partir del modelo con 3 regresores. Las estrellas nos indican el nivel de significación y el numero entre parentesis representa el error de estandard. Como podemos observar casi todas las variables son significativas y distintas de 0 a un nivel de significación del 99%.
+
+<<<<Modelo final segun el anova empezando por con un modelo con todas las variables
+medv ~ age + rad + crim + nox + tax + indus + ptratio + rm + lstat + lstat2
+
+
+<<<<Modelo final segun el anova empezando por con un modelo con pocas variables
+medv ~ ptratio + rm + lstat + lstat2
+
+#Insight: Escogemos el modelo 5 ya que el test anova no rechaza la nula (p valor es ligeramente superior al 5%), es decir, la diferencia entre el modelo 4 y 5 no es estadisticamente significativa, y por lo tanto, nos quedariamos con el modelo más simplificado con menos regresores.
+
+summary(regresionlmultiple5)
+
+#Debido a que incorporamos un número elevado de regresores, conviene hacer un test de multicolinealidad para comprobar la estabilidad del modelo y esto lo haremos con el Variance Inflation Factor:
+
+# Instalamos el paquete necesario para relizar un VIF
+install.packages("car")
+library(car)
+
+vif_df_fit5 <- data.frame(Variables = names(vif(regresionlmultiple5)), VIF = as.numeric(vif(regresionlmultiple5)))
+
+vif_df_fit5 <- vif_df_fit5[order(vif_df_fit5$VIF, decreasing = TRUE), ]
+
+ggplot(vif_df_fit5, aes(x = Variables, y = VIF)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(title = "Factor de Inflación de la Varianza (VIF)",
+       x = "Variables predictoras",
+       y = "VIF") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5))
+
+#Insight: Como podemos observar los valores VIF son superiores a 10 en lstat y su tranformación al cuadrado. Esto indica de forma evidente multicolinealidad fuerte y complica la interpretación de los coeficientes de regresión debido a la alta correlación entre las variables predictoras. Addicionalmente, los coeficientes individuales pueden ser imprecisos y difíciles de interpretar. Por lo tanto, para solventar problemas de estabilidad de modelo, eliminamos lstat y obtenemos valores más razonables:
+
+regresionlmultiple5_aux = lm(medv~age + rad + crim + nox + tax + indus + ptratio + rm + lstat2, data=Boston)
+vif_df_fit5_aux <- data.frame(Variables = names(vif(regresionlmultiple5_aux)), VIF = as.numeric(vif(regresionlmultiple5_aux)))
+
+vif_df_fit5_aux <- vif_df_fit5_aux[order(vif_df_fit5_aux$VIF, decreasing = TRUE), ]
+
+ggplot(vif_df_fit5_aux, aes(x = Variables, y = VIF)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(title = "Factor de Inflación de la Varianza (VIF)",
+       x = "Variables predictoras",
+       y = "VIF") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5))
+        
+
+#DIAGNÓSTICO DEL MODELO
+#Analisis de residuos del modelo final
+residuos <- resid(regresionlmultiple5_aux)
+
+# Gráfico de residuos vs. valores ajustados
+plot(regresionlmultiple5_aux, which = 1)
+
+# Gráfico de residuos estandarizados vs. valores ajustados
+plot(regresionlmultiple5_aux, which = 3)
+
+# Insight: En el primer gráfico, podemos observar cómo aunque obtiene un patrón ligeramente curvado, tiene residuos igualmente distribuidos alrededor de la línea horizontal sin un número significativo (3) de observaciones atipicas destacables. En el gráfico 2 se realiza un gráfico de Spread-Location con el objetivo de demostrar si el modelo respeta la asunción de homoscedasticidad. Se muestra como los puntos estan distribuidos aleatoriamente por encima y por debajo de la línea roja sin un patrón aparente.
+
+#Breusch-Pagan para confirmar si nos encontramos ante un modelo heterocedástico u homocedástico
+bptest(regresionlmultiple5_aux)
+
+#El pvalor es inferior a 0.05 y, por lo tanto, rechazamos la hipotesis nula de homoscedasticidad y existen indicios de heterocedasciticidad y la variabilidad de los errores no es constante en todos los niveles de los regresores.Para corregirlo, utilizamos un ajuste lineal con corrección de errores (errores estandares robustos) y los coeficientes són los siguientes:
+
+install.packages("sandwich")
+library(sandwich)
+coeftest(regresionlmultiple5_aux, vcov = vcovHC(regresionlmultiple5_aux, "HC1"))   
+
+# NORMALIDAD DE LOS RESIDUOS
+# Gráfico Q-Q plot de los residuos estandarizados
+qqnorm(residuos)
+qqline(residuos)
+# Insight: Existe menos desviación respecto al ideal de distribución normal (puntos en la linea diagonal) si lo comparamos con el modelo sin introducir polinomios.
+
+#Test de normalidad de Shapiro-Wilk 
+shapiro.test(resid(regresionlmultiple5_aux))
+# p-valor muy inferior a 0.05, por lo que rechazamos H0, los residuos NO se comportan como una normal.
+
+#Kurtosis y Skeweness
+skewness(residuos)
+kurtosis(residuos)
+# la kurtosis queda fuera del rango comprendido entre -2 y 2, por lo que podemos de nuevo rechazar la hipótesis de normalidad.
+
+#INDEPENDENCIA DE LOS RESIDUOS
+# Prueba de Durbin-Watson. H0: no existe autocorrelacion entre los residuos.
+dwtest(regresionlmultiple5_aux)
+# p-valor mucho menor que 0,05, por lo que rechazamos la hipótesis inicial: los residuos NO son independientes.
+
+
+
+# ANÁLISIS DE LA CRIMINALIDAD EN BASE A LAS VARIBALES medv Y lstat
+# Calcular la matriz de correlación
+correlation_matrix <- cor(Boston[c("medv", "lstat", "crim")])
+print(correlation_matrix)
+
+# Crear un gráfico de dispersión con la tasa de criminalidad representada por el tamaño y el color de los puntos
+ggplot(Boston, aes(x = medv, y = lstat)) +
+  geom_point(aes(size = crim, color = crim), alpha = 0.7) +
+  scale_size_continuous(name = "Tasa de Criminalidad", trans = "sqrt") +
+  scale_color_viridis(name = "Tasa de Criminalidad") +
+  labs(title = "Mapa de Boston basado en el Crimen",
+       x = "Valor Medio de las Viviendas (medv)",
+       y = "Porcentaje de Población de Estatus Bajo (lstat)") +
+  theme_minimal()
+
+#Insight: El gráfico de dispersión muestra una relación inversa entre la tasa de criminalidad (“crim”) y el valor medio de las viviendas (“medv”). A medida que aumenta el valor medio de las viviendas, la tasa de criminalidad tiende a disminuir, lo que sugiere que las áreas con viviendas de mayor valor tienden a tener una menor incidencia de crimen.También se observa una relación positiva entre la tasa de criminalidad y el porcentaje de población de estatus bajo (“lstat”) Las áreas con un mayor porcentaje de población de estatus bajo tienden a tener tasas de criminalidad más altas, lo que indica una asociación entre la pobreza o la desventaja socioeconómica y el crimen.Estas conclusiones sugieren que factores como el valor de las viviendas y el estatus socioeconómico de la población pueden influir significativamente en los niveles de criminalidad en las áreas urbanas. Comprender estas relaciones puede ser crucial a la hora de entender el sistema de la vivienda en Boston ya que pese a pertenecer a un estatus de nivel bajo, medio o alto, una familia o ciudadano estándar siempre preferirá, aunque le suponga una inversión mayor, vivir en una residencia donde la tasa de crímenes no sea disparatada.
